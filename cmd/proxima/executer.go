@@ -27,6 +27,14 @@ var (
 	kInfluxTricorderPath = "/proc/influx"
 )
 
+var (
+	kTenantRegex = regexp.MustCompile(`tenant_[0-9a-f]{32}`)
+)
+
+func isLmmDb(database string) bool {
+	return kTenantRegex.MatchString(database)
+}
+
 // Single influx instance
 type instance struct {
 	Cl client.Client
@@ -233,6 +241,16 @@ func (e *executerType) Query(
 	// Got to have at least one split
 	if len(querySplits) == 0 {
 		return nil, errNoBackends
+	}
+
+	if isLmmDb(database) {
+		length := len(querySplits)
+		if unknownRetentionPolicyPresent {
+			length--
+		}
+		for i := 0; i < length; i++ {
+			querSplits[i] = qlutils.SlashesToUnderscores(querySplits[i])
+		}
 	}
 
 	// These are placeholders for the response and error from each influx db
