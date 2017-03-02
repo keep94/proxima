@@ -1,7 +1,6 @@
 package common
 
 import (
-	"fmt"
 	"github.com/Symantec/proxima/config"
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/influxql"
@@ -11,24 +10,19 @@ import (
 
 type Influx struct {
 	data   config.Influx
-	handle client.Client
+	handle handleType
 }
 
 func NewInflux(influx config.Influx) (*Influx, error) {
-	result := &Influx{data: influx}
-	var err error
-	result.handle, err = client.NewHTTPClient(client.HTTPConfig{
-		Addr: influx.HostAndPort,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return newInfluxForTesting(influx, influxCreateHandle)
 }
 
 func (d *Influx) Query(queryStr, epoch string) (*client.Response, error) {
-	aQuery := client.NewQuery(queryStr, d.data.Database, epoch)
-	return d.handle.Query(aQuery)
+	return d.handle.Query(queryStr, d.data.Database, epoch)
+}
+
+func (d *Influx) Close() error {
+	return d.handle.Close()
 }
 
 type InfluxList struct {
@@ -36,16 +30,7 @@ type InfluxList struct {
 }
 
 func NewInfluxList(influxes config.InfluxList) (*InfluxList, error) {
-	influxes = influxes.Order()
-	result := &InfluxList{instances: make([]*Influx, len(influxes))}
-	for i := range influxes {
-		var err error
-		result.instances[i], err = NewInflux(influxes[i])
-		if err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
+	return newInfluxListForTesting(influxes, influxCreateHandle)
 }
 
 func (l *InfluxList) Query(
@@ -54,26 +39,29 @@ func (l *InfluxList) Query(
 	return l.query(logger, query, epoch, now)
 }
 
+func (l *InfluxList) Close() error {
+	var lastError lastErrorType
+	for _, d := range l.instances {
+		lastError.Add(d.Close())
+	}
+	return lastError.Error()
+}
+
 type Scotty struct {
 	data   config.Scotty
-	handle client.Client
+	handle handleType
 }
 
 func NewScotty(scotty config.Scotty) (*Scotty, error) {
-	result := &Scotty{data: scotty}
-	var err error
-	result.handle, err = client.NewHTTPClient(client.HTTPConfig{
-		Addr: scotty.HostAndPort,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return newScottyForTesting(scotty, influxCreateHandle)
 }
 
 func (s *Scotty) Query(queryStr, epoch string) (*client.Response, error) {
-	aQuery := client.NewQuery(queryStr, "scotty", epoch)
-	return s.handle.Query(aQuery)
+	return s.handle.Query(queryStr, "scotty", epoch)
+}
+
+func (s *Scotty) Close() error {
+	return s.handle.Close()
 }
 
 type ScottyList struct {
@@ -81,21 +69,21 @@ type ScottyList struct {
 }
 
 func NewScottyList(scotties config.ScottyList) (*ScottyList, error) {
-	result := &ScottyList{instances: make([]*Scotty, len(scotties))}
-	for i := range scotties {
-		var err error
-		result.instances[i], err = NewScotty(scotties[i])
-		if err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
+	return newScottyListForTesting(scotties, influxCreateHandle)
 }
 
 func (l *ScottyList) Query(
 	logger *log.Logger, query *influxql.Query, epoch string) (
 	*client.Response, error) {
 	return l.query(logger, query, epoch)
+}
+
+func (l *ScottyList) Close() error {
+	var lastError lastErrorType
+	for _, s := range l.instances {
+		lastError.Add(s.Close())
+	}
+	return lastError.Error()
 }
 
 type Database struct {
@@ -105,17 +93,7 @@ type Database struct {
 }
 
 func NewDatabase(db config.Database) (*Database, error) {
-	result := &Database{name: db.Name}
-	var err error
-	result.influxes, err = NewInfluxList(db.Influxes)
-	if err != nil {
-		return nil, err
-	}
-	result.scotties, err = NewScottyList(db.Scotties)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return newDatabaseForTesting(db, influxCreateHandle)
 }
 
 func (d *Database) Name() string {
@@ -130,25 +108,36 @@ func (d *Database) Query(
 	return d.query(logger, query, epoch, now)
 }
 
+func (d *Database) Close() error {
+	var lastError lastErrorType
+	lastError.Add(d.influxes.Close())
+	lastError.Add(d.scotties.Close())
+	return lastError.Error()
+}
+
 type Proxima struct {
 	dbs map[string]*Database
 }
 
 func NewProxima(proxima config.Proxima) (*Proxima, error) {
-	result := &Proxima{dbs: make(map[string]*Database)}
-	for _, dbSpec := range proxima.Dbs {
-		db, err := NewDatabase(dbSpec)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := result.dbs[db.Name()]; ok {
-			return nil, fmt.Errorf("Duplicate database name: %s", db.Name())
-		}
-		result.dbs[db.Name()] = db
-	}
-	return result, nil
+	return newProximaForTesting(proxima, influxCreateHandle)
 }
 
 func (p *Proxima) ByName(name string) *Database {
 	return p.dbs[name]
+}
+
+func (p *Proxima) Names() (result []string) {
+	for n := range p.dbs {
+		result = append(result, n)
+	}
+	return
+}
+
+func (p *Proxima) Close() error {
+	var lastError lastErrorType
+	for _, db := range p.dbs {
+		lastError.Add(db.Close())
+	}
+	return lastError.Error()
 }

@@ -47,7 +47,7 @@ func (s *Scotty) UnmarshalYAML(
 type ScottyList []Scotty
 
 type Database struct {
-	Name     string     `yajml:"name"`
+	Name     string     `yaml:"name"`
 	Influxes InfluxList `yaml:"influxes"`
 	Scotties ScottyList `yaml:"scotties"`
 }

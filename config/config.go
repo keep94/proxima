@@ -19,5 +19,5 @@ func (b byDurationDesc) Swap(i, j int) {
 }
 
 func orderInfluxes(influx []Influx) {
-	sort.Sort(byDurationDesc(influx))
+	sort.Stable(byDurationDesc(influx))
 }

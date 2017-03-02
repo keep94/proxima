@@ -1,6 +1,8 @@
 package common
 
 import (
+	"fmt"
+	"github.com/Symantec/proxima/config"
 	"github.com/Symantec/scotty/influx/qlutils"
 	"github.com/Symantec/scotty/influx/responses"
 	"github.com/influxdata/influxdb/client/v2"
@@ -10,8 +12,51 @@ import (
 	"time"
 )
 
+type lastErrorType struct {
+	err error
+}
+
+func (l *lastErrorType) Add(err error) {
+	if err != nil {
+		l.err = err
+	}
+}
+
+func (l *lastErrorType) Error() error {
+	return l.err
+}
+
 type queryerType interface {
 	Query(q, epoch string) (*client.Response, error)
+}
+
+type handleType interface {
+	Query(queryStr, database, epoch string) (*client.Response, error)
+	Close() error
+}
+
+type influxHandleType struct {
+	cl client.Client
+}
+
+func (q *influxHandleType) Query(queryStr, database, epoch string) (
+	*client.Response, error) {
+	aQuery := client.NewQuery(queryStr, database, epoch)
+	return q.cl.Query(aQuery)
+}
+
+func (q *influxHandleType) Close() error {
+	return q.cl.Close()
+}
+
+type handleCreaterType func(addr string) (handleType, error)
+
+func influxCreateHandle(addr string) (handleType, error) {
+	cl, err := client.NewHTTPClient(client.HTTPConfig{Addr: addr})
+	if err != nil {
+		return nil, err
+	}
+	return &influxHandleType{cl: cl}, nil
 }
 
 func getConcurrentResponses(
@@ -78,6 +123,30 @@ func getConcurrentResponses(
 	return responses.Merge(responsesToMerge...)
 }
 
+func newInfluxForTesting(
+	influx config.Influx, creater handleCreaterType) (*Influx, error) {
+	handle, err := creater(influx.HostAndPort)
+	if err != nil {
+		return nil, err
+	}
+	return &Influx{data: influx, handle: handle}, nil
+}
+
+func newInfluxListForTesting(
+	influxes config.InfluxList, creater handleCreaterType) (
+	*InfluxList, error) {
+	influxes = influxes.Order()
+	result := &InfluxList{instances: make([]*Influx, len(influxes))}
+	for i := range influxes {
+		var err error
+		result.instances[i], err = newInfluxForTesting(influxes[i], creater)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
 func (l *InfluxList) splitQuery(
 	query *influxql.Query, now time.Time) (
 	splitQueries []*influxql.Query,
@@ -121,6 +190,29 @@ func (l *InfluxList) query(
 	return getConcurrentResponses(endpoints, querySplits, epoch, logger)
 }
 
+func newScottyForTesting(
+	scotty config.Scotty, creater handleCreaterType) (*Scotty, error) {
+	handle, err := creater(scotty.HostAndPort)
+	if err != nil {
+		return nil, err
+	}
+	return &Scotty{data: scotty, handle: handle}, nil
+}
+
+func newScottyListForTesting(
+	scotties config.ScottyList, creater handleCreaterType) (
+	*ScottyList, error) {
+	result := &ScottyList{instances: make([]*Scotty, len(scotties))}
+	for i := range scotties {
+		var err error
+		result.instances[i], err = newScottyForTesting(scotties[i], creater)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
 func (l *ScottyList) query(
 	logger *log.Logger, query *influxql.Query, epoch string) (
 	*client.Response, error) {
@@ -135,10 +227,41 @@ func (l *ScottyList) query(
 	return getConcurrentResponses(endpoints, queries, epoch, logger)
 }
 
+func newDatabaseForTesting(
+	db config.Database, creater handleCreaterType) (*Database, error) {
+	result := &Database{name: db.Name}
+	var err error
+	result.influxes, err = newInfluxListForTesting(db.Influxes, creater)
+	if err != nil {
+		return nil, err
+	}
+	result.scotties, err = newScottyListForTesting(db.Scotties, creater)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (d *Database) query(
 	logger *log.Logger,
 	query *influxql.Query,
 	epoch string,
 	now time.Time) (*client.Response, error) {
 	return nil, nil
+}
+
+func newProximaForTesting(
+	proxima config.Proxima, creater handleCreaterType) (*Proxima, error) {
+	result := &Proxima{dbs: make(map[string]*Database)}
+	for _, dbSpec := range proxima.Dbs {
+		db, err := newDatabaseForTesting(dbSpec, creater)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := result.dbs[db.Name()]; ok {
+			return nil, fmt.Errorf("Duplicate database name: %s", db.Name())
+		}
+		result.dbs[db.Name()] = db
+	}
+	return result, nil
 }
