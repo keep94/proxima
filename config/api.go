@@ -5,34 +5,69 @@ import (
 	"time"
 )
 
-// Instance represents a single influx instance
-type Instance struct {
+type Influx struct {
 	// http://someHost.com:1234.
 	HostAndPort string `yaml:"hostAndPort"`
 	// The duration in this instance's retention policy
 	Duration time.Duration `yaml:"duration"`
+	// The influx Database to use
+	Database string `yaml:"database"`
 }
 
-func (i *Instance) Reset() {
-	*i = Instance{}
+func (i *Influx) UnmarshalYAML(
+	unmarshal func(interface{}) error) error {
+	type influxFields Influx
+	return yamlutil.StrictUnmarshalYAML(unmarshal, (*influxFields)(i))
 }
 
-func (i *Instance) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	type instanceFields Instance
-	return yamlutil.StrictUnmarshalYAML(unmarshal, (*instanceFields)(i))
+// InfluxList instances are to be treated as immutable
+type InfluxList []Influx
+
+// Order returns an InfluxList like this one but ordered by duration
+// in descending order
+func (i InfluxList) Order() InfluxList {
+	result := make(InfluxList, len(i))
+	copy(result, i)
+	orderInfluxes(result)
+	return result
 }
 
-// Cluster represents a group of influx instances
-type Cluster struct {
-	// The instances
-	Instances []Instance `yaml:"instances"`
+type Scotty struct {
+	// http://someHost.com:1234.
+	HostAndPort string `yaml:"hostAndPort"`
 }
 
-func (c *Cluster) Reset() {
-	*c = Cluster{}
+func (s *Scotty) UnmarshalYAML(
+	unmarshal func(interface{}) error) error {
+	type scottyFields Scotty
+	return yamlutil.StrictUnmarshalYAML(unmarshal, (*scottyFields)(s))
 }
 
-func (c *Cluster) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	type clusterFields Cluster
-	return yamlutil.StrictUnmarshalYAML(unmarshal, (*clusterFields)(c))
+// ScottyList instances are to be treated as immutable
+type ScottyList []Scotty
+
+type Database struct {
+	Name     string     `yajml:"name"`
+	Influxes InfluxList `yaml:"influxes"`
+	Scotties ScottyList `yaml:"scotties"`
+}
+
+func (d *Database) UnmarshalYAML(
+	unmarshal func(interface{}) error) error {
+	type databaseFields Database
+	return yamlutil.StrictUnmarshalYAML(unmarshal, (*databaseFields)(d))
+}
+
+type Proxima struct {
+	Dbs []Database `yaml:"databases"`
+}
+
+func (p *Proxima) Reset() {
+	*p = Proxima{}
+}
+
+func (p *Proxima) UnmarshalYAML(
+	unmarshal func(interface{}) error) error {
+	type proximaFields Proxima
+	return yamlutil.StrictUnmarshalYAML(unmarshal, (*proximaFields)(p))
 }
