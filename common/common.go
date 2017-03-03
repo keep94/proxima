@@ -107,6 +107,9 @@ func getConcurrentResponses(
 		}
 		err := errs[i]
 		response := responseList[i]
+		if err == nil && response.Error() != nil {
+			err = response.Error()
+		}
 		if err == nil {
 			responsesToMerge = append(responsesToMerge, response)
 		} else {
@@ -283,6 +286,13 @@ func (d *Database) query(
 		wg.Done()
 	}()
 	wg.Wait()
+	if scottyError != nil || scottyResponse.Error() != nil {
+		return influxResponse, influxError
+	}
+	if influxError != nil || influxResponse.Error() != nil {
+		return scottyResponse, scottyError
+	}
+
 	var lastError lastErrorType
 	lastError.Add(influxError)
 	lastError.Add(scottyError)
