@@ -5,6 +5,7 @@ import (
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/influxql"
 	"log"
+	"sort"
 	"time"
 )
 
@@ -40,6 +41,9 @@ func (l *InfluxList) Query(
 }
 
 func (l *InfluxList) Close() error {
+	if l == nil {
+		return nil
+	}
 	var lastError lastErrorType
 	for _, d := range l.instances {
 		lastError.Add(d.Close())
@@ -79,6 +83,9 @@ func (l *ScottyList) Query(
 }
 
 func (l *ScottyList) Close() error {
+	if l == nil {
+		return nil
+	}
 	var lastError lastErrorType
 	for _, s := range l.instances {
 		lastError.Add(s.Close())
@@ -131,6 +138,7 @@ func (p *Proxima) Names() (result []string) {
 	for n := range p.dbs {
 		result = append(result, n)
 	}
+	sort.Strings(result)
 	return
 }
 

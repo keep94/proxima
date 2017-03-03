@@ -135,6 +135,9 @@ func newInfluxForTesting(
 func newInfluxListForTesting(
 	influxes config.InfluxList, creater handleCreaterType) (
 	*InfluxList, error) {
+	if len(influxes) == 0 {
+		return nil, nil
+	}
 	influxes = influxes.Order()
 	result := &InfluxList{instances: make([]*Influx, len(influxes))}
 	for i := range influxes {
@@ -176,7 +179,7 @@ func (l *InfluxList) minTime(i int, now time.Time) time.Time {
 func (l *InfluxList) query(
 	logger *log.Logger, query *influxql.Query, epoch string, now time.Time) (
 	*client.Response, error) {
-	if len(l.instances) == 0 {
+	if l == nil {
 		return responses.Merge()
 	}
 	querySplits, err := l.splitQuery(query, now)
@@ -202,6 +205,9 @@ func newScottyForTesting(
 func newScottyListForTesting(
 	scotties config.ScottyList, creater handleCreaterType) (
 	*ScottyList, error) {
+	if len(scotties) == 0 {
+		return nil, nil
+	}
 	result := &ScottyList{instances: make([]*Scotty, len(scotties))}
 	for i := range scotties {
 		var err error
@@ -216,6 +222,9 @@ func newScottyListForTesting(
 func (l *ScottyList) query(
 	logger *log.Logger, query *influxql.Query, epoch string) (
 	*client.Response, error) {
+	if l == nil {
+		return responses.Merge()
+	}
 	endpoints := make([]queryerType, len(l.instances))
 	for i := range endpoints {
 		endpoints[i] = l.instances[i]
@@ -247,7 +256,40 @@ func (d *Database) query(
 	query *influxql.Query,
 	epoch string,
 	now time.Time) (*client.Response, error) {
-	return nil, nil
+	if d.influxes == nil && d.scotties == nil {
+		return responses.Merge()
+	}
+	if d.influxes == nil {
+		return d.scotties.Query(logger, query, epoch)
+	}
+	if d.scotties == nil {
+		return d.influxes.Query(logger, query, epoch, now)
+	}
+	var wg sync.WaitGroup
+	var influxResponse *client.Response
+	var influxError error
+	wg.Add(1)
+	go func() {
+		influxResponse, influxError = d.influxes.Query(
+			logger, query, epoch, now)
+		wg.Done()
+	}()
+	var scottyResponse *client.Response
+	var scottyError error
+	wg.Add(1)
+	go func() {
+		scottyResponse, scottyError = d.scotties.Query(
+			logger, query, epoch)
+		wg.Done()
+	}()
+	wg.Wait()
+	var lastError lastErrorType
+	lastError.Add(influxError)
+	lastError.Add(scottyError)
+	if err := lastError.Error(); err != nil {
+		return nil, err
+	}
+	return responses.MergePreferred(influxResponse, scottyResponse)
 }
 
 func newProximaForTesting(

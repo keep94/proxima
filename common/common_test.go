@@ -70,9 +70,6 @@ func (f *fakeHandleType) Query(queryStr, database, epoch string) (
 }
 
 func (f *fakeHandleType) Close() error {
-	if f.closed {
-		panic("handle already closed")
-	}
 	f.closed = true
 	return nil
 }
@@ -124,17 +121,23 @@ func newResponse(values ...int64) *client.Response {
 
 }
 
-func TestInfluxList(t *testing.T) {
-	Convey("Given an influx list", t, func() {
+func TestAPI(t *testing.T) {
+	Convey("Given a proxima", t, func() {
 		now := time.Date(2016, 12, 1, 0, 1, 0, 0, time.UTC)
 		store := handleStoreType{
 			"alpha":   &fakeHandleType{},
 			"bravo":   &fakeHandleType{},
 			"charlie": &fakeHandleType{},
+			"delta":   &fakeHandleType{},
+			"echo":    &fakeHandleType{},
+			"foxtrot": &fakeHandleType{},
 		}
 		store["alpha"].WhenQueriedReturn(newResponse(1000, 10, 1200, 11), nil)
 		store["bravo"].WhenQueriedReturn(newResponse(1200, 12, 1400, 13), nil)
 		store["charlie"].WhenQueriedReturn(newResponse(1400, 14, 1600, 15), nil)
+		store["delta"].WhenQueriedReturn(newResponse(1400, 24, 1600, 25), nil)
+		store["echo"].WhenQueriedReturn(newResponse(1600, 26, 1800, 27), nil)
+		store["foxtrot"].WhenQueriedReturn(newResponse(1800, 28, 2000, 29), nil)
 
 		influxConfigs := config.InfluxList{
 			{
@@ -153,77 +156,174 @@ func TestInfluxList(t *testing.T) {
 				Duration:    10 * time.Hour,
 			},
 		}
-		influxes, err := newInfluxListForTesting(influxConfigs, store.Create)
-		So(err, ShouldBeNil)
-		Convey("Query going to now should work", func() {
-			query, err := qlutils.NewQuery(
-				"select mean(value) from dual where time >= now() - 5h", now)
-			So(err, ShouldBeNil)
-			response, err := influxes.Query(nil, query, "ns", now)
-			So(err, ShouldBeNil)
-			So(response, ShouldResemble, newResponse(
-				1000, 10,
-				1200, 12,
-				1400, 14,
-				1600, 15,
-			))
-			queryStr, database, epoch := store["alpha"].NextQuery()
-			So(
-				queryStr,
-				ShouldEqual,
-				"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T19:01:00Z' AND time < '2016-12-01T00:01:00Z'")
-			So(database, ShouldEqual, "a")
-			So(epoch, ShouldEqual, "ns")
-			So(store["alpha"].NoMoreQueries(), ShouldBeTrue)
 
-			queryStr, database, epoch = store["bravo"].NextQuery()
-			So(
-				queryStr,
-				ShouldEqual,
-				"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T19:01:00Z' AND time < '2016-12-01T00:01:00Z'")
-			So(database, ShouldEqual, "b")
-			So(epoch, ShouldEqual, "ns")
-			So(store["bravo"].NoMoreQueries(), ShouldBeTrue)
+		scottyConfigs := config.ScottyList{
+			{HostAndPort: "delta"},
+			{HostAndPort: "echo"},
+			{HostAndPort: "foxtrot"},
+		}
 
-			queryStr, database, epoch = store["charlie"].NextQuery()
-			So(
-				queryStr,
-				ShouldEqual,
-				"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T23:01:00Z' AND time < '2016-12-01T00:01:00Z'")
-			So(database, ShouldEqual, "c")
-			So(epoch, ShouldEqual, "ns")
-			So(store["charlie"].NoMoreQueries(), ShouldBeTrue)
+		proximaConfig := config.Proxima{
+			Dbs: []config.Database{
+				{
+					Name:     "influx",
+					Influxes: influxConfigs,
+				},
+				{
+					Name:     "scotty",
+					Scotties: scottyConfigs,
+				},
+				{
+					Name: "nothing",
+				},
+				{
+					Name:     "both",
+					Influxes: influxConfigs,
+					Scotties: scottyConfigs,
+				},
+			},
+		}
+		proxima, err := newProximaForTesting(proximaConfig, store.Create)
+		Convey("Close should free resources", func() {
+			So(proxima.Close(), ShouldBeNil)
+			So(store.AllClosed(), ShouldBeTrue)
 		})
+		Convey("Names should return names in alphabetical order", func() {
+			names := proxima.Names()
+			So(names, ShouldResemble, []string{
+				"both", "influx", "nothing", "scotty"})
+		})
+		So(err, ShouldBeNil)
+		Convey("Nothing", func() {
+			db := proxima.ByName("nothing")
+			So(db, ShouldNotBeNil)
+			Convey("Query should return zero", func() {
+				query, err := qlutils.NewQuery(
+					"select mean(value) from dual where time >= now() - 5h", now)
+				So(err, ShouldBeNil)
+				response, err := db.Query(nil, query, "ns", now)
+				So(err, ShouldBeNil)
+				So(*response, ShouldBeZeroValue)
+			})
+		})
+		Convey("Just influx", func() {
+			db := proxima.ByName("influx")
+			So(db, ShouldNotBeNil)
 
-		Convey("query stopping before now should work", func() {
-			query, err := qlutils.NewQuery(
-				"select mean(value) from dual where time >= now() - 120h and time < now() - 5h", now)
-			So(err, ShouldBeNil)
-			response, err := influxes.Query(nil, query, "ns", now)
-			So(err, ShouldBeNil)
-			So(response, ShouldResemble, newResponse(
-				1000, 10,
-				1200, 12,
-				1400, 13,
-			))
-			queryStr, database, epoch := store["alpha"].NextQuery()
-			So(
-				queryStr,
-				ShouldEqual,
-				"SELECT mean(value) FROM dual WHERE time >= '2016-11-26T20:01:00Z' AND time < '2016-11-30T19:01:00Z'")
-			So(database, ShouldEqual, "a")
-			So(epoch, ShouldEqual, "ns")
-			So(store["alpha"].NoMoreQueries(), ShouldBeTrue)
+			Convey("Query going to now should work", func() {
+				query, err := qlutils.NewQuery(
+					"select mean(value) from dual where time >= now() - 5h", now)
+				So(err, ShouldBeNil)
+				response, err := db.Query(nil, query, "ns", now)
+				So(err, ShouldBeNil)
+				So(response, ShouldResemble, newResponse(
+					1000, 10,
+					1200, 12,
+					1400, 14,
+					1600, 15,
+				))
+				queryStr, database, epoch := store["alpha"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T19:01:00Z' AND time < '2016-12-01T00:01:00Z'")
+				So(database, ShouldEqual, "a")
+				So(epoch, ShouldEqual, "ns")
+				So(store["alpha"].NoMoreQueries(), ShouldBeTrue)
 
-			queryStr, database, epoch = store["bravo"].NextQuery()
-			So(
-				queryStr,
-				ShouldEqual,
-				"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T14:01:00Z' AND time < '2016-11-30T19:01:00Z'")
-			So(database, ShouldEqual, "b")
-			So(epoch, ShouldEqual, "ns")
-			So(store["bravo"].NoMoreQueries(), ShouldBeTrue)
-			So(store["charlie"].NoMoreQueries(), ShouldBeTrue)
+				queryStr, database, epoch = store["bravo"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T19:01:00Z' AND time < '2016-12-01T00:01:00Z'")
+				So(database, ShouldEqual, "b")
+				So(epoch, ShouldEqual, "ns")
+				So(store["bravo"].NoMoreQueries(), ShouldBeTrue)
+
+				queryStr, database, epoch = store["charlie"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T23:01:00Z' AND time < '2016-12-01T00:01:00Z'")
+				So(database, ShouldEqual, "c")
+				So(epoch, ShouldEqual, "ns")
+				So(store["charlie"].NoMoreQueries(), ShouldBeTrue)
+			})
+
+			Convey("query stopping before now should work", func() {
+				query, err := qlutils.NewQuery(
+					"select mean(value) from dual where time >= now() - 120h and time < now() - 5h", now)
+				So(err, ShouldBeNil)
+				response, err := db.Query(nil, query, "ns", now)
+				So(err, ShouldBeNil)
+				So(response, ShouldResemble, newResponse(
+					1000, 10,
+					1200, 12,
+					1400, 13,
+				))
+				queryStr, database, epoch := store["alpha"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-26T20:01:00Z' AND time < '2016-11-30T19:01:00Z'")
+				So(database, ShouldEqual, "a")
+				So(epoch, ShouldEqual, "ns")
+				So(store["alpha"].NoMoreQueries(), ShouldBeTrue)
+
+				queryStr, database, epoch = store["bravo"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T14:01:00Z' AND time < '2016-11-30T19:01:00Z'")
+				So(database, ShouldEqual, "b")
+				So(epoch, ShouldEqual, "ns")
+				So(store["bravo"].NoMoreQueries(), ShouldBeTrue)
+				So(store["charlie"].NoMoreQueries(), ShouldBeTrue)
+			})
+		})
+		Convey("Just scotty", func() {
+			db := proxima.ByName("scotty")
+			So(db, ShouldNotBeNil)
+
+			Convey("Scotty query should work", func() {
+				query, err := qlutils.NewQuery(
+					"select mean(value) from dual where time >= now() - 5h", now)
+				So(err, ShouldBeNil)
+				response, err := db.Query(nil, query, "ms", now)
+				So(err, ShouldBeNil)
+				So(response, ShouldResemble, newResponse(
+					1400, 24,
+					1600, 26,
+					1800, 28,
+					2000, 29,
+				))
+				queryStr, database, epoch := store["delta"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T19:01:00Z'")
+				So(database, ShouldEqual, "scotty")
+				So(epoch, ShouldEqual, "ms")
+				So(store["delta"].NoMoreQueries(), ShouldBeTrue)
+
+				queryStr, database, epoch = store["echo"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T19:01:00Z'")
+				So(database, ShouldEqual, "scotty")
+				So(epoch, ShouldEqual, "ms")
+				So(store["echo"].NoMoreQueries(), ShouldBeTrue)
+
+				queryStr, database, epoch = store["foxtrot"].NextQuery()
+				So(
+					queryStr,
+					ShouldEqual,
+					"SELECT mean(value) FROM dual WHERE time >= '2016-11-30T19:01:00Z'")
+				So(database, ShouldEqual, "scotty")
+				So(epoch, ShouldEqual, "ms")
+				So(store["foxtrot"].NoMoreQueries(), ShouldBeTrue)
+			})
 		})
 	})
 }
