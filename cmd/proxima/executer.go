@@ -7,15 +7,17 @@ import (
 	"github.com/Symantec/scotty/influx/qlutils"
 	"github.com/Symantec/scotty/lib/yamlutil"
 	"github.com/Symantec/tricorder/go/tricorder"
+	"github.com/Symantec/tricorder/go/tricorder/units"
 	"github.com/influxdata/influxdb/client/v2"
 	"io"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 )
 
 var (
-	kInfluxTricorderPath = "/proc/influx"
+	kDatabasesTricorderPath = "/proc/databases"
 )
 
 var (
@@ -102,33 +104,114 @@ func (e *executerType) SetupWithStream(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if err := registerMetrics(&proximaConfig); err != nil {
+	if err := registerProxima(proximaConfig); err != nil {
 		return err
 	}
 	e.set(proxima)
 	return nil
 }
 
-func registerMetrics(proximaConfig *config.Proxima) error {
-	tricorder.UnregisterPath(kInfluxTricorderPath)
-	/*
-		influxDir, err := tricorder.RegisterDirectory(kInfluxTricorderPath)
-		if err != nil {
-			return err
-		}
-	*/
-	// TODO
+func registerInflux(
+	influx config.Influx, dir *tricorder.DirectorySpec) error {
+	if err := dir.RegisterMetric(
+		"endpoint",
+		&influx.HostAndPort,
+		units.None,
+		"endpoint of influx server"); err != nil {
+		return err
+	}
+	if err := dir.RegisterMetric(
+		"database",
+		&influx.Database,
+		units.None,
+		"database in influx server"); err != nil {
+		return err
+	}
+	if err := dir.RegisterMetric(
+		"retentionPolicy",
+		&influx.Duration,
+		units.None,
+		"retention policy of influx server"); err != nil {
+		return err
+	}
 	return nil
 }
 
-// We have to compare the error strings because the RPC call to scotty
-// prevents the error from scotty from being compared directly.
-// TODO
-func isUnsupportedError(err error) bool {
-	if err == nil {
-		return false
+func registerInfluxes(
+	influxes []config.Influx, dir *tricorder.DirectorySpec) error {
+	influxesDir, err := dir.RegisterDirectory("influxes")
+	if err != nil {
+		return err
 	}
-	return err.Error() == qlutils.ErrUnsupported.Error()
+	for i := range influxes {
+		influxDir, err := influxesDir.RegisterDirectory(strconv.Itoa(i))
+		if err != nil {
+			return err
+		}
+		if err := registerInflux(influxes[i], influxDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerScotty(
+	scotty config.Scotty, dir *tricorder.DirectorySpec) error {
+	if err := dir.RegisterMetric(
+		"endpoint",
+		&scotty.HostAndPort,
+		units.None,
+		"endpoint of scotty server"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func registerScotties(
+	scotties []config.Scotty, dir *tricorder.DirectorySpec) error {
+	scottiesDir, err := dir.RegisterDirectory("scotties")
+	if err != nil {
+		return err
+	}
+	for i := range scotties {
+		scottyDir, err := scottiesDir.RegisterDirectory(strconv.Itoa(i))
+		if err != nil {
+			return err
+		}
+		if err := registerScotty(scotties[i], scottyDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerDatabase(
+	db config.Database, dir *tricorder.DirectorySpec) error {
+	databaseDir, err := dir.RegisterDirectory(db.Name)
+	if err != nil {
+		return err
+	}
+	if err := registerInfluxes(db.Influxes, databaseDir); err != nil {
+		return err
+	}
+	if err := registerScotties(db.Scotties, databaseDir); err != nil {
+		return err
+	}
+	return nil
+}
+
+func registerProxima(proximaConfig config.Proxima) error {
+	tricorder.UnregisterPath(kDatabasesTricorderPath)
+	databasesDir, err := tricorder.RegisterDirectory(kDatabasesTricorderPath)
+	if err != nil {
+		return err
+	}
+	for _, db := range proximaConfig.Dbs {
+		if err := registerDatabase(db, databasesDir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *executerType) Names() []string {
