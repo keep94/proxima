@@ -56,7 +56,22 @@ func performQuery(
 	executer *executerType,
 	logger *log.Logger,
 	query, db, epoch string) (*client.Response, error) {
-	if strings.ToUpper(query) == "SHOW DATABASES" {
+	switch strings.ToUpper(query) {
+	case "SHOW MEASUREMENTS LIMIT 1":
+		return &client.Response{
+			Results: []client.Result{
+				{
+					Series: []models.Row{
+						{
+							Name:    "measurements",
+							Columns: []string{"name"},
+							Values:  [][]interface{}{{"aname"}},
+						},
+					},
+				},
+			},
+		}, nil
+	case "SHOW DATABASES":
 		dbNames := executer.Names()
 		values := make([][]interface{}, len(dbNames))
 		for i := range dbNames {
@@ -75,8 +90,9 @@ func performQuery(
 				},
 			},
 		}, nil
+	default:
+		return executer.Query(logger, query, db, epoch)
 	}
-	return executer.Query(logger, query, db, epoch)
 }
 
 func dateHandler() http.Handler {
