@@ -1,3 +1,5 @@
+// Package config contains the datastructures representing the configuration
+// of proxima.
 package config
 
 import (
@@ -5,6 +7,7 @@ import (
 	"time"
 )
 
+// Influx represents a single influx backend.
 type Influx struct {
 	// http://someHost.com:1234.
 	HostAndPort string `yaml:"hostAndPort"`
@@ -20,7 +23,8 @@ func (i *Influx) UnmarshalYAML(
 	return yamlutil.StrictUnmarshalYAML(unmarshal, (*influxFields)(i))
 }
 
-// InfluxList instances are to be treated as immutable
+// InfluxList represents a group of influx backends.
+// InfluxList instances are to be treated as immutable.
 type InfluxList []Influx
 
 // Order returns an InfluxList like this one but ordered by duration
@@ -32,6 +36,7 @@ func (i InfluxList) Order() InfluxList {
 	return result
 }
 
+// Scotty represents a single scotty server.
 type Scotty struct {
 	// http://someHost.com:1234.
 	HostAndPort string `yaml:"hostAndPort"`
@@ -43,12 +48,17 @@ func (s *Scotty) UnmarshalYAML(
 	return yamlutil.StrictUnmarshalYAML(unmarshal, (*scottyFields)(s))
 }
 
-// ScottyList instances are to be treated as immutable
+// ScottyList represents a group of scotty servers.
+// ScottyList instances are to be treated as immutable.
 type ScottyList []Scotty
 
+// Database represents a single named configuration within proxima.
 type Database struct {
-	Name     string     `yaml:"name"`
+	// Name of configuration
+	Name string `yaml:"name"`
+	// The influx backends
 	Influxes InfluxList `yaml:"influxes"`
+	// The scotty servers
 	Scotties ScottyList `yaml:"scotties"`
 }
 
@@ -58,6 +68,8 @@ func (d *Database) UnmarshalYAML(
 	return yamlutil.StrictUnmarshalYAML(unmarshal, (*databaseFields)(d))
 }
 
+// Proxima represents the configuration of proxima. This is what is read
+// from the configuration file using the yamlutil package.
 type Proxima struct {
 	Dbs []Database `yaml:"databases"`
 }

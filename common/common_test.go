@@ -24,6 +24,8 @@ type queryCallType struct {
 	epoch    string
 }
 
+// fakeHandleType represents a connection to a fake influx backend or
+// scotty server.
 type fakeHandleType struct {
 	queryCalls    []queryCallType
 	queryResponse *client.Response
@@ -31,11 +33,19 @@ type fakeHandleType struct {
 	closed        bool
 }
 
+// WhenQueriedReturn instructs this fake to return a particular response
+// or error when queried. This fake always returns this same response
+// regardless of the actual query.
 func (f *fakeHandleType) WhenQueriedReturn(
 	response *client.Response, err error) {
 	f.queryResponse, f.queryError = response, err
 }
 
+// NextQuery returns the next query this fake received.
+// A query consists of three parts, the query string, the influx database,
+// and the epoch, the precision of the times e.g "ns", "ms", "s", etc.
+// If previous NextQuery calls have already returned all the queries made
+// against this fake, NextQuery panics.
 func (f *fakeHandleType) NextQuery() (
 	query, database, epoch string) {
 	query = f.queryCalls[0].query
@@ -47,14 +57,19 @@ func (f *fakeHandleType) NextQuery() (
 	return
 }
 
+// NoMoreQueries returns true if NextQuery would panic.
 func (f *fakeHandleType) NoMoreQueries() bool {
 	return len(f.queryCalls) == 0
 }
 
+// Closed returns true if Close was called on this fake
 func (f *fakeHandleType) Closed() bool {
 	return f.closed
 }
 
+// Query sends a query to the fake influx or scotty server, records the
+// query sent, and returns the same response and error passed to
+// WhenQueriedReturn.
 func (f *fakeHandleType) Query(queryStr, database, epoch string) (
 	*client.Response, error) {
 	if f.closed {
@@ -70,13 +85,17 @@ func (f *fakeHandleType) Query(queryStr, database, epoch string) (
 	return f.queryResponse, f.queryError
 }
 
+// Close closes the connection to the fake influx or scotty server.
 func (f *fakeHandleType) Close() error {
 	f.closed = true
 	return nil
 }
 
+// handleStoreType is a collection of fake influx backends and scotty servers
+// keyed by their host and port.
 type handleStoreType map[string]*fakeHandleType
 
+// Create returns the connection to the fake server given its host and port.
 func (s handleStoreType) Create(addr string) (handleType, error) {
 	result, ok := s[addr]
 	if !ok {
@@ -85,6 +104,7 @@ func (s handleStoreType) Create(addr string) (handleType, error) {
 	return result, nil
 }
 
+// AllClose returns true if all connections to all fakes have been closed.
 func (s handleStoreType) AllClosed() bool {
 	for _, h := range s {
 		if !h.Closed() {
@@ -125,6 +145,7 @@ func newResponse(values ...int64) *client.Response {
 func TestAPI(t *testing.T) {
 	Convey("Given fake sources", t, func() {
 		now := time.Date(2016, 12, 1, 0, 1, 0, 0, time.UTC)
+		// All of our fake servers / backends
 		store := handleStoreType{
 			"alpha":       &fakeHandleType{},
 			"bravo":       &fakeHandleType{},
@@ -136,6 +157,7 @@ func TestAPI(t *testing.T) {
 			"error1":      &fakeHandleType{},
 			"unsupported": &fakeHandleType{},
 		}
+		// These lines tell each fake what to return when queried.
 		store["alpha"].WhenQueriedReturn(newResponse(1000, 10, 1200, 11), nil)
 		store["bravo"].WhenQueriedReturn(newResponse(1200, 12, 1400, 13), nil)
 		store["charlie"].WhenQueriedReturn(newResponse(1400, 14, 1600, 15), nil)
@@ -236,6 +258,8 @@ func TestAPI(t *testing.T) {
 					},
 				},
 			}
+			// Create a proxima instance that uses our fakes rather than
+			// connecting to real influx backends and scotty servers.
 			proxima, err := newProximaForTesting(proximaConfig, store.Create)
 			Convey("Close should free resources", func() {
 				So(proxima.Close(), ShouldBeNil)
@@ -273,6 +297,8 @@ func TestAPI(t *testing.T) {
 					So(err, ShouldBeNil)
 					response, err := db.Query(nil, query, "ms", now)
 					So(err, ShouldBeNil)
+					// In the case that scotty doesn't support the query,
+					// rely on the influx servers.
 					So(response, ShouldResemble, newResponse(
 						1000, 10,
 						1200, 12,
@@ -291,12 +317,16 @@ func TestAPI(t *testing.T) {
 					So(err, ShouldBeNil)
 					response, err := db.Query(nil, query, "ns", now)
 					So(err, ShouldBeNil)
+					// influx backend with shortest retention policy always
+					// takes precedence.
 					So(response, ShouldResemble, newResponse(
 						1000, 10,
 						1200, 12,
 						1400, 14,
 						1600, 15,
 					))
+					// 'alpha' which has 100h retention policy should receive
+					// the original query.
 					queryStr, database, epoch := store["alpha"].NextQuery()
 					So(
 						queryStr,
@@ -306,6 +336,8 @@ func TestAPI(t *testing.T) {
 					So(epoch, ShouldEqual, "ns")
 					So(store["alpha"].NoMoreQueries(), ShouldBeTrue)
 
+					// 'bravo' which has 10h retention policy should receive
+					// the original query.
 					queryStr, database, epoch = store["bravo"].NextQuery()
 					So(
 						queryStr,
@@ -315,6 +347,8 @@ func TestAPI(t *testing.T) {
 					So(epoch, ShouldEqual, "ns")
 					So(store["bravo"].NoMoreQueries(), ShouldBeTrue)
 
+					// 'charlie' which has 1h retention policy should receive
+					// the query modified to go back only one hour
 					queryStr, database, epoch = store["charlie"].NextQuery()
 					So(
 						queryStr,
@@ -336,6 +370,8 @@ func TestAPI(t *testing.T) {
 						1200, 12,
 						1400, 13,
 					))
+					// 'alpha' with a 100 hour retention policy should receive
+					// original query modified to go back only 100 hours.
 					queryStr, database, epoch := store["alpha"].NextQuery()
 					So(
 						queryStr,
@@ -345,6 +381,8 @@ func TestAPI(t *testing.T) {
 					So(epoch, ShouldEqual, "ns")
 					So(store["alpha"].NoMoreQueries(), ShouldBeTrue)
 
+					// 'bravo' with a 10 hour retention policy should receive
+					// original query modified to go back only 10 hours.
 					queryStr, database, epoch = store["bravo"].NextQuery()
 					So(
 						queryStr,
@@ -353,6 +391,9 @@ func TestAPI(t *testing.T) {
 					So(database, ShouldEqual, "b")
 					So(epoch, ShouldEqual, "ns")
 					So(store["bravo"].NoMoreQueries(), ShouldBeTrue)
+
+					// 'charlie' should receive no queries since its retention
+					// policy is 1h, and the query ends 5 hours back in time.
 					So(store["charlie"].NoMoreQueries(), ShouldBeTrue)
 				})
 			})
@@ -366,12 +407,15 @@ func TestAPI(t *testing.T) {
 					So(err, ShouldBeNil)
 					response, err := db.Query(nil, query, "ms", now)
 					So(err, ShouldBeNil)
+					// scotty server listed last takes precedence.
 					So(response, ShouldResemble, newResponse(
 						1400, 24,
 						1600, 26,
 						1800, 28,
 						2000, 29,
 					))
+					// Unlike influx servers, original query sent to all
+					// scotty servers.
 					queryStr, database, epoch := store["delta"].NextQuery()
 					So(
 						queryStr,
