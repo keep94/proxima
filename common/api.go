@@ -57,8 +57,9 @@ func (l *InfluxList) Close() error {
 
 // Scotty represents a single scotty server.
 type Scotty struct {
-	data   config.Scotty
-	handle handleType
+	handle   handleType
+	partials *ScottyPartials
+	scotties *ScottyList
 }
 
 func NewScotty(scotty config.Scotty) (*Scotty, error) {
@@ -68,12 +69,12 @@ func NewScotty(scotty config.Scotty) (*Scotty, error) {
 func (s *Scotty) Query(
 	logger *log.Logger, query *influxql.Query, epoch string) (
 	*client.Response, error) {
-	return s.handle.Query(query.String(), "scotty", epoch)
+	return s.query(logger, query, epoch)
 }
 
 // Close frees any resources associated with this instance.
 func (s *Scotty) Close() error {
-	return s.handle.Close()
+	return s._close()
 }
 
 type ScottyPartials struct {

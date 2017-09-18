@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"github.com/Symantec/proxima/config"
 	"github.com/Symantec/scotty/influx/qlutils"
@@ -222,11 +223,56 @@ func (l *InfluxList) query(
 
 func newScottyForTesting(
 	scotty config.Scotty, creater handleCreaterType) (*Scotty, error) {
-	handle, err := creater(scotty.HostAndPort)
-	if err != nil {
-		return nil, err
+	if scotty.HostAndPort != "" {
+		handle, err := creater(scotty.HostAndPort)
+		if err != nil {
+			return nil, err
+		}
+		return &Scotty{handle: handle}, nil
 	}
-	return &Scotty{data: scotty, handle: handle}, nil
+	if len(scotty.Partials) != 0 {
+		partials, err := newScottyPartialsForTesting(scotty.Partials, creater)
+		if err != nil {
+			return nil, err
+		}
+		return &Scotty{partials: partials}, nil
+	}
+	if len(scotty.Scotties) != 0 {
+		scotties, err := newScottyListForTesting(scotty.Scotties, creater)
+		if err != nil {
+			return nil, err
+		}
+		return &Scotty{scotties: scotties}, nil
+	}
+	return nil, errors.New("Scotty must have either hostAndPort, partials, or scotties")
+}
+
+func (s *Scotty) query(
+	logger *log.Logger, query *influxql.Query, epoch string) (
+	*client.Response, error) {
+	switch {
+	case s.handle != nil:
+		return s.handle.Query(query.String(), "scotty", epoch)
+	case s.partials != nil:
+		return s.partials.Query(logger, query, epoch)
+	case s.scotties != nil:
+		return s.scotties.Query(logger, query, epoch)
+	}
+	// Should never get here.
+	panic("query should return something")
+}
+
+func (s *Scotty) _close() error {
+	if s.handle != nil {
+		return s.handle.Close()
+	}
+	if s.partials != nil {
+		return s.partials.Close()
+	}
+	if s.scotties != nil {
+		return s.scotties.Close()
+	}
+	return nil
 }
 
 func newScottyPartialsForTesting(
