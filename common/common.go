@@ -541,7 +541,7 @@ func aggregateScottyStmtResponses(
 			return
 		}
 		return client.Result{Series: meanRows}, nil
-	} else {
+	} else if aggregationType == "sum" || aggregationType == "count" {
 		var rows []models.Row
 		rows, err = sumUpScottyResponses(
 			endpoints,
@@ -552,6 +552,9 @@ func aggregateScottyStmtResponses(
 			return
 		}
 		return client.Result{Series: rows}, nil
+	} else {
+		err = errors.New("Only sum, count, mean queries are supported")
+		return
 	}
 
 }
