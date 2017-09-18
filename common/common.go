@@ -29,7 +29,8 @@ func (l *lastErrorType) Error() error {
 }
 
 type queryerType interface {
-	Query(q, epoch string) (*client.Response, error)
+	Query(l *log.Logger, q *influxql.Query, epoch string) (
+		*client.Response, error)
 }
 
 type handleType interface {
@@ -64,7 +65,8 @@ func influxCreateHandle(addr string) (handleType, error) {
 func getRawConcurrentResponses(
 	endpoints []queryerType,
 	queries []*influxql.Query,
-	epoch string) (
+	epoch string,
+	logger *log.Logger) (
 	responseList []*client.Response, errs []error) {
 	if len(endpoints) != len(queries) {
 		panic("endpoints and queries parameters must have same length")
@@ -83,13 +85,13 @@ func getRawConcurrentResponses(
 		wg.Add(1)
 		go func(
 			n queryerType,
-			query string,
+			query *influxql.Query,
 			responseHere **client.Response,
 			errHere *error) {
-			*responseHere, *errHere = n.Query(query, epoch)
+			*responseHere, *errHere = n.Query(logger, query, epoch)
 			wg.Done()
 		}(endpoints[i],
-			query.String(),
+			query,
 			&responseList[i],
 			&errs[i])
 	}
@@ -103,7 +105,7 @@ func getConcurrentResponses(
 	epoch string,
 	logger *log.Logger) (*client.Response, error) {
 	responseList, errs := getRawConcurrentResponses(
-		endpoints, queries, epoch)
+		endpoints, queries, epoch, logger)
 
 	// These will be the responses from influx servers that we merge
 	var responsesToMerge []*client.Response
@@ -386,7 +388,7 @@ func sumUpScottyResponses(
 		queries[i] = query
 	}
 	responseList, errs := getRawConcurrentResponses(
-		endpoints, queries, epoch)
+		endpoints, queries, epoch, logger)
 
 	// If we get an error from any scotty, we might give a wrong answer
 	// so the best we can do is error out.

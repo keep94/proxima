@@ -20,8 +20,9 @@ func NewInflux(influx config.Influx) (*Influx, error) {
 }
 
 // Query runs a query against this backend.
-func (d *Influx) Query(queryStr, epoch string) (*client.Response, error) {
-	return d.handle.Query(queryStr, d.data.Database, epoch)
+func (d *Influx) Query(
+	logger *log.Logger, query *influxql.Query, epoch string) (*client.Response, error) {
+	return d.handle.Query(query.String(), d.data.Database, epoch)
 }
 
 // Close frees any resources associated with this instance.
@@ -64,9 +65,10 @@ func NewScotty(scotty config.Scotty) (*Scotty, error) {
 	return newScottyForTesting(scotty, influxCreateHandle)
 }
 
-// Query runs a query against this scotty server.
-func (s *Scotty) Query(queryStr, epoch string) (*client.Response, error) {
-	return s.handle.Query(queryStr, "scotty", epoch)
+func (s *Scotty) Query(
+	logger *log.Logger, query *influxql.Query, epoch string) (
+	*client.Response, error) {
+	return s.handle.Query(query.String(), "scotty", epoch)
 }
 
 // Close frees any resources associated with this instance.

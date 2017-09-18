@@ -39,7 +39,9 @@ func (i InfluxList) Order() InfluxList {
 // Scotty represents a single scotty server.
 type Scotty struct {
 	// http://someHost.com:1234.
-	HostAndPort string `yaml:"hostAndPort"`
+	HostAndPort string     `yaml:"hostAndPort"`
+	Scotties    ScottyList `yaml:"scotties"`
+	Partials    ScottyList `yaml:"partials"`
 }
 
 func (s *Scotty) UnmarshalYAML(
