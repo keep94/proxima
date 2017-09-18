@@ -76,6 +76,24 @@ func (s *Scotty) Close() error {
 	return s.handle.Close()
 }
 
+type ScottyPartials struct {
+	instances []*Scotty
+}
+
+func NewScottyPartials(scotties config.ScottyList) (*ScottyPartials, error) {
+	return newScottyPartialsForTesting(scotties, influxCreateHandle)
+}
+
+func (l *ScottyPartials) Query(
+	logger *log.Logger, query *influxql.Query, epoch string) (
+	*client.Response, error) {
+	return l.query(logger, query, epoch)
+}
+
+func (l *ScottyPartials) Close() error {
+	return l._close()
+}
+
 // ScottyList represents a group of scotty servers.
 // nil represents the group of zero scotty servers.
 type ScottyList struct {

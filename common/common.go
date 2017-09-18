@@ -229,6 +229,48 @@ func newScottyForTesting(
 	return &Scotty{data: scotty, handle: handle}, nil
 }
 
+func newScottyPartialsForTesting(
+	scotties config.ScottyList, creater handleCreaterType) (
+	*ScottyPartials, error) {
+	if len(scotties) == 0 {
+		panic("Scotty list must be non-empty")
+	}
+	result := &ScottyPartials{instances: make([]*Scotty, len(scotties))}
+	for i := range scotties {
+		var err error
+		result.instances[i], err = newScottyForTesting(scotties[i], creater)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (l *ScottyPartials) _close() error {
+	if l == nil {
+		return nil
+	}
+	var lastError lastErrorType
+	for _, s := range l.instances {
+		lastError.Add(s.Close())
+	}
+	return lastError.Error()
+}
+
+func (l *ScottyPartials) query(
+	logger *log.Logger, query *influxql.Query, epoch string) (
+	*client.Response, error) {
+	endpoints := make([]queryerType, len(l.instances))
+	for i := range endpoints {
+		endpoints[i] = l.instances[i]
+	}
+	queries := make([]*influxql.Query, len(l.instances))
+	for i := range queries {
+		queries[i] = query
+	}
+	return aggregateScottyResponses(endpoints, query, epoch, logger)
+}
+
 func newScottyListForTesting(
 	scotties config.ScottyList, creater handleCreaterType) (
 	*ScottyList, error) {
