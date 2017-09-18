@@ -7,6 +7,7 @@ import (
 	"github.com/Symantec/scotty/influx/responses"
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/influxql"
+	"github.com/influxdata/influxdb/models"
 	"log"
 	"sort"
 	"sync"
@@ -60,19 +61,18 @@ func influxCreateHandle(addr string) (handleType, error) {
 	return &influxHandleType{cl: cl}, nil
 }
 
-func getConcurrentResponses(
+func getRawConcurrentResponses(
 	endpoints []queryerType,
 	queries []*influxql.Query,
-	epoch string,
-	logger *log.Logger) (
-	*client.Response, error) {
+	epoch string) (
+	responseList []*client.Response, errs []error) {
 	if len(endpoints) != len(queries) {
 		panic("endpoints and queries parameters must have same length")
 	}
 	// These are placeholders for the response and error from each influx db
 	// instance.
-	responseList := make([]*client.Response, len(queries))
-	errs := make([]error, len(queries))
+	responseList = make([]*client.Response, len(queries))
+	errs = make([]error, len(queries))
 
 	var wg sync.WaitGroup
 	for i, query := range queries {
@@ -94,6 +94,16 @@ func getConcurrentResponses(
 			&errs[i])
 	}
 	wg.Wait()
+	return
+}
+
+func getConcurrentResponses(
+	endpoints []queryerType,
+	queries []*influxql.Query,
+	epoch string,
+	logger *log.Logger) (*client.Response, error) {
+	responseList, errs := getRawConcurrentResponses(
+		endpoints, queries, epoch)
 
 	// These will be the responses from influx servers that we merge
 	var responsesToMerge []*client.Response
@@ -363,4 +373,112 @@ func (p *Proxima) _close() error {
 		lastError.Add(db.Close())
 	}
 	return lastError.Error()
+}
+
+func sumUpScottyResponses(
+	endpoints []queryerType,
+	stmt influxql.Statement,
+	epoch string,
+	logger *log.Logger) (result []models.Row, err error) {
+	queries := make([]*influxql.Query, len(endpoints))
+	query := qlutils.SingleQuery(stmt)
+	for i := range queries {
+		queries[i] = query
+	}
+	responseList, errs := getRawConcurrentResponses(
+		endpoints, queries, epoch)
+
+	// If we get an error from any scotty, we might give a wrong answer
+	// so the best we can do is error out.
+	for i := range errs {
+		if errs[i] != nil {
+			return nil, errs[i]
+		}
+		if err := responseList[i].Error(); err != nil {
+			return nil, err
+		}
+	}
+	rowsFromResponses := make([][]models.Row, len(responseList))
+	for i := range rowsFromResponses {
+		rowsFromResponses[i], err = responses.ExtractRows(responseList[i])
+		if err != nil {
+			return
+		}
+	}
+	return responses.SumRowsTogether(rowsFromResponses...)
+}
+
+func aggregateScottyStmtResponses(
+	endpoints []queryerType,
+	stmt influxql.Statement,
+	epoch string,
+	logger *log.Logger) (result client.Result, err error) {
+	aggregationType, err := qlutils.AggregationType(stmt)
+	if err != nil {
+		return
+	}
+	if aggregationType == "mean" {
+		var sumStmt, cntStmt influxql.Statement
+		sumStmt, err = qlutils.WithAggregationType(stmt, "sum")
+		if err != nil {
+			return
+		}
+		cntStmt, err = qlutils.WithAggregationType(stmt, "count")
+		if err != nil {
+			return
+		}
+		var sumRows, cntRows []models.Row
+		sumRows, err = sumUpScottyResponses(
+			endpoints,
+			sumStmt,
+			epoch,
+			logger)
+		if err != nil {
+			return
+		}
+		cntRows, err = sumUpScottyResponses(
+			endpoints,
+			cntStmt,
+			epoch,
+			logger)
+		if err != nil {
+			return
+		}
+		var meanRows []models.Row
+		meanRows, err = responses.DivideRows(
+			sumRows, cntRows, []string{"time", "mean"})
+		if err != nil {
+			return
+		}
+		return client.Result{Series: meanRows}, nil
+	} else {
+		var rows []models.Row
+		rows, err = sumUpScottyResponses(
+			endpoints,
+			stmt,
+			epoch,
+			logger)
+		if err != nil {
+			return
+		}
+		return client.Result{Series: rows}, nil
+	}
+
+}
+
+func aggregateScottyResponses(
+	endpoints []queryerType,
+	query *influxql.Query,
+	epoch string,
+	logger *log.Logger) (*client.Response, error) {
+	var results []client.Result
+	for _, stmt := range query.Statements {
+		result, err := aggregateScottyStmtResponses(
+			endpoints, stmt, epoch, logger)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return &client.Response{Results: results}, nil
 }
