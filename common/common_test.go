@@ -176,7 +176,7 @@ func TestScottyPartial(t *testing.T) {
 		}
 		store["error"].WhenQueriedReturn(nil, kErrSomeError)
 		store["alpha"].WhenQueryIsReturn(
-			"select sum(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
+			"select esum(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
 			&client.Response{
 				Results: []client.Result{
 					{
@@ -207,7 +207,7 @@ func TestScottyPartial(t *testing.T) {
 			},
 			nil)
 		store["alpha"].WhenQueryIsReturn(
-			"select count(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
+			"select ecount(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
 			&client.Response{
 				Results: []client.Result{
 					{
@@ -238,7 +238,7 @@ func TestScottyPartial(t *testing.T) {
 			},
 			nil)
 		store["bravo"].WhenQueryIsReturn(
-			"select sum(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
+			"select esum(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
 			&client.Response{
 				Results: []client.Result{
 					{
@@ -269,7 +269,7 @@ func TestScottyPartial(t *testing.T) {
 			},
 			nil)
 		store["bravo"].WhenQueryIsReturn(
-			"select count(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
+			"select ecount(value) from load where time > '2017-05-13T18:00:00Z' group by time(1m), appname",
 			&client.Response{
 				Results: []client.Result{
 					{
@@ -321,7 +321,7 @@ func TestScottyPartial(t *testing.T) {
 			db := proxima.ByName("regular")
 			So(db, ShouldNotBeNil)
 			query, err := qlutils.NewQuery(
-				"select sum(value) from load where time > now() - 1h group by time(1m), appname", now)
+				"select esum(value) from load where time > now() - 1h group by time(1m), appname", now)
 			So(err, ShouldBeNil)
 			_, err = db.Query(query, "ns", now, nil)
 			So(err, ShouldEqual, kErrSomeError)
@@ -356,7 +356,7 @@ func TestScottyPartial(t *testing.T) {
 				db := proxima.ByName("regular")
 				So(db, ShouldNotBeNil)
 				query, err := qlutils.NewQuery(
-					"select sum(value) from load where time > now() - 1h group by time(1m), appname", now)
+					"select esum(value) from load where time > now() - 1h group by time(1m), appname", now)
 				So(err, ShouldBeNil)
 				response, err := db.Query(query, "ns", now, nil)
 				So(err, ShouldBeNil)
@@ -393,7 +393,7 @@ func TestScottyPartial(t *testing.T) {
 				db := proxima.ByName("regular")
 				So(db, ShouldNotBeNil)
 				query, err := qlutils.NewQuery(
-					"select count(value) from load where time > now() - 1h group by time(1m), appname", now)
+					"select ecount(value) from load where time > now() - 1h group by time(1m), appname", now)
 				So(err, ShouldBeNil)
 				response, err := db.Query(query, "ns", now, nil)
 				So(err, ShouldBeNil)

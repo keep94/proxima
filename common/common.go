@@ -519,7 +519,8 @@ func sumUpScottyResponses(
 
 // aggregateScottyStmtResponses aggregates scotty responses together when each
 // scotty represents different data. The statement is very restricted. For
-// instance, it can only be a sum(), mean() or count() statement.
+// instance, it can only be a sum(), mean(), count(), esum() or ecount()
+// statement. esum() and ecount are unique to scotty.
 func aggregateScottyStmtResponses(
 	endpoints []queryerType,
 	stmt influxql.Statement,
@@ -534,11 +535,11 @@ func aggregateScottyStmtResponses(
 	// ourselves.
 	if aggregationType == "mean" {
 		var sumStmt, cntStmt influxql.Statement
-		sumStmt, err = qlutils.WithAggregationType(stmt, "sum")
+		sumStmt, err = qlutils.WithAggregationType(stmt, "esum")
 		if err != nil {
 			return
 		}
-		cntStmt, err = qlutils.WithAggregationType(stmt, "count")
+		cntStmt, err = qlutils.WithAggregationType(stmt, "ecount")
 		if err != nil {
 			return
 		}
@@ -569,7 +570,8 @@ func aggregateScottyStmtResponses(
 			return
 		}
 		return client.Result{Series: meanRows}, nil
-	} else if aggregationType == "sum" || aggregationType == "count" {
+	} else if aggregationType == "sum" || aggregationType == "count" ||
+		aggregationType == "esum" || aggregationType == "ecount" {
 		// If it is a sum or count statement we issue it to all the scotties
 		// as is and sum up the results.
 		var rows []models.Row
